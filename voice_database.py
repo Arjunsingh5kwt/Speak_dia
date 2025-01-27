@@ -28,7 +28,7 @@ class VoiceDatabase:
             self.db = self.client['voice_recognition_db']
             
             # Select collections
-            self.voice_collection = self.db['voice']
+            self.voice_collection = self.db['voice_embeddings']
             
             # Create index for efficient querying
             self.voice_collection.create_index('name')

@@ -49,7 +49,7 @@ class RealTimeTranscription:
             self.logger.error(f"Wav2Vec2 model loading error: {e}")
             raise
 
-        # Initialize Advanced Speaker Recognition
+        # Initialize Advanced Speaker Recognition 
         self.speaker_recognition = AdvancedSpeakerRecognition()
         
         # Initialize Voice Database

@@ -6,7 +6,7 @@ import torch
 import librosa
 from sklearn.cluster import KMeans
 from pyannote.audio import Pipeline
-from transformers import pipeline as hf_pipeline
+from transformers import pipeline as hf_pipeline, Wav2Vec2FeatureExtractor, Wav2Vec2Model
 import langdetect
 import logging
 
@@ -43,6 +43,10 @@ class AudioAnalyzer:
         # Language Detection
         self.language_detector = hf_pipeline("text-classification", 
                                              model="papluca/xlm-roberta-base-language-detection")
+        
+        # Initialize Wav2Vec2 for embedding extraction
+        self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base")
+        self.wav2vec_model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base")
 
     def load_models(self):
         """
@@ -152,6 +156,84 @@ class AudioAnalyzer:
                 }
             }
 
+    def extract_speaker_embedding(self, audio_path):
+        """
+        Extract voice embedding using Wav2Vec2
+        
+        Args:
+            audio_path (str): Path to the audio file
+        
+        Returns:
+            numpy.ndarray: Voice embedding
+        """
+        try:
+            # Load audio file
+            audio_input, sample_rate = sf.read(audio_path)
+            
+            # Ensure mono audio
+            if audio_input.ndim > 1:
+                audio_input = audio_input.mean(axis=1)
+            
+            # Resample if necessary
+            if sample_rate != 16000:
+                audio_input = librosa.resample(audio_input, sample_rate, 16000)
+            
+            # Normalize audio
+            audio_input = audio_input.astype(np.float32)
+            audio_input = audio_input / np.max(np.abs(audio_input))
+            
+            # Process audio
+            inputs = self.feature_extractor(audio_input, sampling_rate=16000, return_tensors="pt")
+            
+            # Extract features
+            with torch.no_grad():
+                outputs = self.wav2vec_model(inputs.input_values)
+            
+            # Average pooling of the last hidden states
+            embedding = torch.mean(outputs.last_hidden_state, dim=1).squeeze().numpy()
+            
+            return embedding
+            
+        except Exception as e:
+            self.logger.error(f"Embedding extraction error: {e}")
+            return None
+
+    def identify_speaker(self, audio_path):
+        """
+        Identify speaker using Advanced Speaker Recognition
+        
+        Args:
+            audio_path (str): Path to the audio file
+        
+        Returns:
+            dict: Speaker identification results
+        """
+        try:
+            # Extract embedding from the input audio
+            embedding = self.extract_speaker_embedding(audio_path)
+            
+            if embedding is None:
+                return {
+                    'match': False,
+                    'name': 'Unknown',
+                    'confidence': 0.0
+                }
+            
+            # Use Advanced Speaker Recognition to identify speaker
+            speaker_match = self.speaker_recognition.identify_speaker(embedding)
+            
+            self.logger.info(f"Speaker Identification Result: {speaker_match}")
+            
+            return speaker_match
+        
+        except Exception as e:
+            self.logger.error(f"Speaker identification error: {e}")
+            return {
+                'match': False,
+                'name': 'Unknown',
+                'confidence': 0.0
+            }
+
     def analyze_audio(self, audio_path):
         """
         Comprehensive audio analysis with robust error handling
@@ -192,6 +274,9 @@ class AudioAnalyzer:
             # Clean up temporary file
             os.unlink(temp_wav_path)
 
+            # Add speaker identification
+            speaker_identification = self.identify_speaker(audio_path)
+
             # Compile results
             analysis_results = {
                 'transcription': {
@@ -199,7 +284,12 @@ class AudioAnalyzer:
                     'language': transcription.get('language', 'Unknown')
                 },
                 'speaker_diarization': diarization_results,
-                'audio_features': self.extract_audio_features(audio_data)
+                'audio_features': self.extract_audio_features(audio_data),
+                'speaker_identification': {
+                    'name': speaker_identification['name'],
+                    'confidence': speaker_identification['confidence'],
+                    'match': speaker_identification['match']
+                }
             }
 
             return analysis_results
@@ -365,9 +455,16 @@ class AudioAnalyzer:
             summary += "\nAudio Characteristics:\n"
             summary += f"Spectral Centroid: {features.get('spectral_centroid_mean', 'N/A')}\n"
             summary += f"RMS Energy: {features.get('rms_mean', 'N/A')}\n"
+             
+            # Speaker Identification Summary
+            speaker_id = analysis_results.get('speaker_identification', {})
+            summary += "\nSpeaker Identification:\n"
+            summary += f"Name: {speaker_id.get('name', 'Unknown')}\n"
+            summary += f"Confidence: {speaker_id.get('confidence', 0.0):.2%}\n"
+            summary += f"Match: {'Yes' if speaker_id.get('match', False) else 'No'}\n"
 
             return summary
-
+ 
         except Exception as e:
             self.logger.error(f"Summary generation error: {e}")
             return f"Error generating summary: {e}"

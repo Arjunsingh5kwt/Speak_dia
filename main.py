@@ -84,7 +84,7 @@ class RealTimeSpeakerDiarization:
         self.speaker_recognition = AdvancedSpeakerRecognition()
 
     def _select_best_input_device(self):
-        """
+        """ 
         Automatically select the best input device
         Prioritizes devices with more input channels
         """
@@ -173,7 +173,7 @@ class RealTimeSpeakerDiarization:
             transcribed_text = ' '.join(transcribed_text.split())
             
             # Print results only if there's meaningful text
-            if len(transcribed_text) > 3:
+            if len(transcribed_text) > 1:
                 # Display speaker and transcription
                 if speaker_match['match']:
                     print(f"Speaker: {speaker_match['name']} (Confidence: {speaker_match['confidence']:.2%})")
@@ -339,7 +339,7 @@ def main():
         endpoint = os.getenv('AZURE_SPEECH_ENDPOINT')  # Optional
         
         # MongoDB URI handling
-        mongo_uri = os.getenv('MONGO_URI')
+        mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
         
         # If environment variables are not set, raise an error
         if not subscription_key:

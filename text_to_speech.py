@@ -27,7 +27,7 @@ class GoogleTextToSpeech:
             mp3_fp = io.BytesIO()
             tts.write_to_fp(mp3_fp)
             mp3_fp.seek(0)  # Rewind the file pointer to the start of the stream
-            return mp3_fp
+            return mp3_fp 
         except Exception as e:
             print(f"An error occurred: {e}")
             return None

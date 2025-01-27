@@ -168,7 +168,7 @@ class RealTimeDiarizationApp:
             # Start processing thread
             self.processing_thread = threading.Thread(
                 target=self._process_audio_queue, 
-                daemon=True
+                daemon=True 
             )
             self.processing_thread.daemon = True
             self.processing_thread.start()

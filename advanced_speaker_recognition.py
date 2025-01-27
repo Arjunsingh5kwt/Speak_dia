@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 import torch
 import torchaudio
-from speechbrain.inference import SpeakerRecognition
+# from speechbrain.inference import SpeakerRecognition
 from sklearn.metrics.pairwise import cosine_similarity
 from voice_database import VoiceDatabase
 import shutil
@@ -16,10 +16,20 @@ from dotenv import load_dotenv
 import logging
 from datetime import datetime
 import time
+import soundfile as sf
+from typing import Dict, List, Union
+from audio_utils import configure_audio_backend
+
+# Pyannote imports
+from pyannote.audio.pipelines import SpeakerDiarization
+from pyannote.core import Annotation
 
 # Suppress specific warnings
 warnings.filterwarnings('ignore', category=UserWarning)
 warnings.filterwarnings('ignore', category=FutureWarning)
+
+# Call before class initialization
+configure_audio_backend()
 
 def set_file_permissions(file_path):
     """
@@ -84,211 +94,268 @@ def download_file(url, local_filename):
 
 class AdvancedSpeakerRecognition:
     def __init__(self):
-        # Load environment variables
-        load_dotenv()
-
+        """
+        Initialize Advanced Speaker Recognition with Pyannote
+        """
         # Configure logging
-        logging.basicConfig(
-            level=logging.INFO, 
-            format='%(asctime)s - %(levelname)s: %(message)s'
-        )
+        logging.basicConfig(level=logging.INFO)
         self.logger = logging.getLogger(__name__)
 
         # MongoDB Connection
         try:
-            # Use environment variable or default local connection
             mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
             self.mongo_client = pymongo.MongoClient(mongo_uri)
-            
-            # Select database and collection
             self.db = self.mongo_client['voice_recognition_db']
-            self.voice_collection = self.db['voice_embedding']
-            
-            # Cache embeddings for faster processing
-            self.cached_embeddings = self.load_embeddings()
-            
-            self.logger.info(f"Loaded {len(self.cached_embeddings)} voice embeddings")
-        
+            self.speakers_collection = self.db['voice_embeddings']
         except Exception as e:
             self.logger.error(f"MongoDB connection error: {e}")
-            self.cached_embeddings = {}
+            raise
+ 
+        # Initialize Pyannote Speaker Diarization
+        try:
+            # Use pre-trained speaker diarization pipeline
+            self.diarization_pipeline = SpeakerDiarization(
+                segmentation='pyannote/segmentation',
+                embedding='pyannote/embedding',
+                use_auth_token="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"
+            )
+        except Exception as e:
+            self.logger.error(f"Diarization pipeline loading error: {e}")
             raise
 
-    def load_embeddings(self):
+    def extract_speaker_embedding(self, audio_path: str) -> np.ndarray:
         """
-        Load all voice embeddings from MongoDB
+        Extract speaker embedding using Pyannote Diarization
+        
+        Args:
+            audio_path (str): Path to audio file
         
         Returns:
-            dict: Cached embeddings with name as key and embedding as value
+            numpy.ndarray: Speaker embedding
         """
         try:
-            # Retrieve all embeddings from the collection
-            embeddings = {}
-            for doc in self.voice_collection.find():
-                embeddings[doc['name']] = np.array(doc['embedding'])
+            # Perform diarization to get embeddings
+            diarization = self.diarization_pipeline(audio_path)
             
-            return embeddings
+            # Extract embeddings from diarization
+            embeddings = []
+            for segment, _, speaker in diarization.itertracks(yield_label=True):
+                # Get embedding for each speaker segment
+                embedding = self.diarization_pipeline.embedding(audio_path, segment)
+                embeddings.append(embedding)
+            
+            # Average embeddings if multiple segments
+            if embeddings:
+                return np.mean(embeddings, axis=0)
+            
+            return None
         
         except Exception as e:
-            self.logger.error(f"Error loading embeddings: {e}")
+            self.logger.error(f"Embedding extraction error: {e}")
+            return None
+
+    def perform_diarization(self, audio_path: str) -> Dict[str, Dict]:
+        """
+        Perform speaker diarization using Pyannote
+        
+        Args:
+            audio_path (str): Path to audio file
+        
+        Returns:
+            dict: Diarization results with speaker segments
+        """
+        try:
+            # Perform diarization
+            diarization = self.diarization_pipeline(audio_path)
+            
+            # Process diarization results
+            speaker_segments = {}
+            for turn, _, speaker in diarization.itertracks(yield_label=True):
+                if speaker not in speaker_segments:
+                    speaker_segments[speaker] = {
+                        'total_speech_time': 0,
+                        'segments': []
+                    }
+                
+                speaker_segments[speaker]['total_speech_time'] += turn.end - turn.start
+                speaker_segments[speaker]['segments'].append({
+                    'start': turn.start,
+                    'end': turn.end
+                })
+            
+            return speaker_segments
+        
+        except Exception as e:
+            self.logger.error(f"Diarization error: {e}")
             return {}
 
-    def calculate_similarity(self, embedding1, embedding2):
+    def identify_speaker(self, input_embedding: np.ndarray, threshold: float = 0.5) -> Dict:
         """
-        Calculate cosine similarity between two embeddings
+        Advanced speaker identification with comprehensive matching strategies
         
         Args:
-            embedding1 (numpy.ndarray): First embedding
-            embedding2 (numpy.ndarray): Second embedding
-        
-        Returns:
-            float: Similarity score (0-1)
-        """
-        try:
-            # Ensure embeddings are numpy arrays
-            embedding1 = np.array(embedding1)
-            embedding2 = np.array(embedding2)
-            
-            # Calculate cosine similarity
-            # Note: cosine returns distance, so 1 - distance gives similarity
-            similarity = 1 - cosine(embedding1, embedding2)
-            
-            return similarity
-        
-        except Exception as e:
-            self.logger.error(f"Similarity calculation error: {e}")
-            return 0.0
-
-    def identify_speaker(self, input_embedding):
-        """
-        Identify speaker based on input embedding
-        
-        Args:
-            input_embedding (numpy.ndarray): Embedding to match
+            input_embedding (numpy.ndarray): Input speaker embedding
+            threshold (float): Similarity threshold for matching
         
         Returns:
             dict: Speaker identification results
         """
         try:
-            # If no cached embeddings, return unknown
-            if not self.cached_embeddings:
+            # Fetch all registered speakers
+            registered_speakers = list(self.speakers_collection.find())
+            
+            # No speakers in database
+            if not registered_speakers:
+                self.logger.warning("No speakers found in database")
                 return {
                     'match': False,
                     'name': 'Unknown',
                     'confidence': 0.0
                 }
             
+            # Debugging: Print input embedding details
+            self.logger.info(f"Input Embedding Shape: {input_embedding.shape}")
+            self.logger.info(f"Input Embedding Type: {type(input_embedding)}")
+            
+            # Comprehensive similarity computation
+            def compute_similarity(emb1, emb2):
+                """
+                Compute multiple similarity metrics with robust error handling
+                """
+                try:
+                    # Ensure embeddings are numpy arrays
+                    emb1 = np.asarray(emb1)
+                    emb2 = np.asarray(emb2)
+                    
+                    # Normalize embeddings
+                    emb1 = emb1 / np.linalg.norm(emb1)
+                    emb2 = emb2 / np.linalg.norm(emb2)
+                    
+                    # Multiple similarity metrics
+                    cosine_sim = 1 - cosine(emb1, emb2)
+                    dot_product_sim = np.dot(emb1, emb2)
+                    
+                    # Weighted similarity
+                    similarity = 0.7 * cosine_sim + 0.3 * dot_product_sim
+                    
+                    return similarity
+                except Exception as e:
+                    self.logger.error(f"Similarity computation error: {e}")
+                    return 0.0
+            
+            # Compare embeddings
+            similarities = []
+            speaker_details = []
+            
+            for speaker in registered_speakers:
+                if 'embedding' in speaker:
+                    try:
+                        # Convert stored embedding to numpy array
+                        ref_embedding = np.array(speaker['embedding'])
+                        
+                        # Debugging: Print reference embedding details
+                        self.logger.info(f"Ref Embedding Shape: {ref_embedding.shape}")
+                        
+                        # Ensure embeddings have compatible shapes
+                        if ref_embedding.ndim == input_embedding.ndim:
+                            # Compute similarity
+                            similarity = compute_similarity(input_embedding, ref_embedding)
+                            
+                            # Debugging: Log individual similarities
+                            self.logger.info(f"Similarity for {speaker.get('name', 'Unknown')}: {similarity}")
+                            
+                            similarities.append(similarity)
+                            speaker_details.append({
+                                'name': speaker.get('name', 'Unknown'),
+                                'embedding': ref_embedding
+                            })
+                        else:
+                            self.logger.warning(f"Shape mismatch for {speaker.get('name', 'Unknown')}")
+                    
+                    except Exception as e:
+                        self.logger.error(f"Embedding comparison error: {e}")
+            
             # Find best match
-            best_match = {
+            if similarities:
+                best_match_index = np.argmax(similarities)
+                best_similarity = similarities[best_match_index]
+                
+                # Adaptive thresholding with logging
+                dynamic_threshold = max(0.5, threshold)
+                self.logger.info(f"Dynamic Threshold: {dynamic_threshold}")
+                self.logger.info(f"Best Similarity: {best_similarity}")
+                
+                # Check against threshold
+                if best_similarity >= dynamic_threshold:
+                    best_match = speaker_details[best_match_index]
+                    return {
+                        'match': True,
+                        'name': best_match['name'],
+                        'confidence': best_similarity,
+                        'embedding': best_match['embedding'].tolist()
+                    }
+                else:
+                    self.logger.warning(f"No match found. Best similarity {best_similarity} below threshold {dynamic_threshold}")
+            
+            # No match found
+            return {
                 'match': False,
                 'name': 'Unknown',
                 'confidence': 0.0
             }
-            
-            # Compare with all cached embeddings
-            for name, stored_embedding in self.cached_embeddings.items():
-                similarity = self.calculate_similarity(input_embedding, stored_embedding)
-                
-                # Update best match if similarity is higher
-                if similarity > 0.5 and similarity > best_match['confidence']:
-                    best_match = {
-                        'match': True,
-                        'name': name,
-                        'confidence': similarity
-                    }
-            
-            return best_match
         
         except Exception as e:
-            self.logger.error(f"Speaker identification error: {e}")
+            self.logger.error(f"Comprehensive speaker identification error: {e}")
             return {
                 'match': False,
                 'name': 'Unknown',
                 'confidence': 0.0
             }
 
-    def add_new_speaker(self, name, embedding):
+    def add_new_speaker(self, name: str, embedding: np.ndarray) -> bool:
         """
-        Add a new speaker to the database
+        Add a new speaker to the database with embedding validation
         
         Args:
-            name (str): Name of the speaker
-            embedding (numpy.ndarray): Voice embedding
+            name (str): Speaker name
+            embedding (numpy.ndarray): Speaker voice embedding
         
         Returns:
-            bool: True if successfully added, False otherwise
+            bool: Success of speaker addition
         """
         try:
-            # Prepare embedding document
-            embedding_doc = {
-                'name': name,
-                'embedding': embedding.tolist(),
-                'timestamp': datetime.utcnow()
-            }
+            # Validate embedding
+            if embedding is None or len(embedding) == 0:
+                self.logger.error("Invalid embedding: Cannot add speaker")
+                return False
             
-            # Insert into MongoDB
-            result = self.voice_collection.insert_one(embedding_doc)
+            # Check if speaker already exists
+            existing_speaker = self.speakers_collection.find_one({'name': name})
             
-            # Update cached embeddings
-            self.cached_embeddings[name] = embedding
+            if existing_speaker:
+                # Update existing speaker
+                self.speakers_collection.update_one(
+                    {'name': name},
+                    {'$set': {
+                        'embedding': embedding.tolist(),
+                        'last_updated': datetime.now()
+                    }}
+                )
+                self.logger.info(f"Updated existing speaker: {name}")
+            else:
+                # Insert new speaker
+                self.speakers_collection.insert_one({
+                    'name': name,
+                    'embedding': embedding.tolist(),
+                    'created_at': datetime.now()
+                })
+                self.logger.info(f"Added new speaker: {name}")
             
-            self.logger.info(f"New speaker {name} added successfully")
             return True
         
         except Exception as e:
-            self.logger.error(f"Error adding new speaker: {e}")
+            self.logger.error(f"Error adding speaker: {e}")
             return False
-
-    def refresh_embeddings(self):
-        """
-        Refresh cached embeddings from database
-        """
-        try:
-            self.cached_embeddings = self.load_embeddings()
-            self.logger.info(f"Refreshed embeddings. Total: {len(self.cached_embeddings)}")
-        except Exception as e:
-            self.logger.error(f"Embedding refresh error: {e}")
-
-class SpeakerRecognition:
-    def __init__(self, embedding_model, voice_database):
-        # Use lighter model or pre-compute embeddings
-        self.model = embedding_model
-        self.voice_database = voice_database
-        
-        # Enable GPU acceleration if available
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        self.model.to(self.device)
-        
-        # Use faster inference methods
-        torch.set_grad_enabled(False)  # Disable gradient computation
-        self.model.eval()  # Set model to evaluation mode
-
-    def recognize_speaker(self, audio_chunk):
-        # Reduce processing time by:
-        # 1. Using smaller audio chunks
-        # 2. Implementing faster similarity calculation
-        start_time = time.time()
-        
-        # Convert audio to tensor and move to device
-        audio_tensor = torch.from_numpy(audio_chunk).to(self.device)
-        
-        # Use faster embedding extraction
-        embedding = self.model.extract_embedding(audio_tensor)
-        
-        # Vectorized similarity computation
-        similarities = np.array([
-            np.dot(embedding, ref_embedding) / 
-            (np.linalg.norm(embedding) * np.linalg.norm(ref_embedding))
-            for ref_embedding in self.voice_database.embeddings
-        ])
-        
-        best_match_index = np.argmax(similarities)
-        confidence = similarities[best_match_index]
-        
-        processing_time = time.time() - start_time
-        print(f"Speaker recognition took {processing_time:.4f} seconds")
-        
-        return self.voice_database.speakers[best_match_index], confidence
 
 def main():
     """
@@ -298,12 +365,35 @@ def main():
         # Initialize speaker recognition
         speaker_rec = AdvancedSpeakerRecognition()
         
-        # Example usage
-        print("Advanced Speaker Recognition Initialized")
-        print(f"Cached Speakers: {list(speaker_rec.cached_embeddings.keys())}")
+        # Prompt for audio file
+        audio_path = input("Enter path to audio file: ").strip()
+        
+        if os.path.exists(audio_path):
+            # Extract embedding
+            embedding = speaker_rec.extract_speaker_embedding(audio_path)
+            
+            if embedding is not None:
+                # Perform diarization
+                diarization_results = speaker_rec.perform_diarization(audio_path)
+                print("\nDiarization Results:")
+                for speaker, details in diarization_results.items():
+                    print(f"Speaker {speaker}:")
+                    print(f"Total Speech Time: {details['total_speech_time']:.2f}s")
+                    print("Segments:", details['segments'])
+                
+                # Identify speaker
+                speaker_match = speaker_rec.identify_speaker(embedding)
+                print("\nSpeaker Identification:")
+                print(f"Name: {speaker_match['name']}")
+                print(f"Confidence: {speaker_match['confidence']:.2%}")
+                print(f"Match: {'Yes' if speaker_match['match'] else 'No'}")
+            else:
+                print("Failed to extract speaker embedding.")
+        else:
+            print("File does not exist.")
     
     except Exception as e:
-        print(f"Initialization error: {e}")
+        print(f"Error: {e}")
 
 if __name__ == "__main__":
     main() 

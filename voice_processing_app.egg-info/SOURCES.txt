@@ -1,0 +1,7 @@
+README.md
+setup.py
+voice_processing_app.egg-info/PKG-INFO
+voice_processing_app.egg-info/SOURCES.txt
+voice_processing_app.egg-info/dependency_links.txt
+voice_processing_app.egg-info/requires.txt
+voice_processing_app.egg-info/top_level.txt

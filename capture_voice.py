@@ -47,7 +47,7 @@ class VoiceCapture:
         try:
             self.feature_extractor = Wav2Vec2FeatureExtractor.from_pretrained("facebook/wav2vec2-base")
             self.model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base")
-            
+             
             # Load Whisper for transcription verification
             self.whisper_model = whisper.load_model("base")
             

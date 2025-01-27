@@ -1,27 +1,39 @@
+numpy>=1.20.0
+torch>=1.10.0
 sounddevice>=0.4.1
 wave
 openai-whisper
-numpy>=1.19.0
 scikit-learn
 transformers
-torch>=1.9.0
 scipy
 soundfile>=0.10.3.post1
 googletrans==3.1.0a0
 speechbrain>=1.0.0
-pyannote.audio
+pyannote.audio>=2.1.1
+pyannote.core>=5.0.0
 xgboost
 librosa
 langdetect
 azure-cognitiveservices-speech
 whisper 
-numpy
-pymongo
-dnspython
-python-dotenv
+pymongo>=4.3.0
+dnspython>=2.3.0
+python-dotenv>=1.0.0
 ffmpeg-python
-azure-cognitiveservices-speech
 pyaudio
-streamlit
+wheel
+gtts
 pygame
 pydub
+fastapi==0.95.1
+uvicorn==0.22.0
+python-multipart==0.0.6
+pydantic==1.10.7
+# Specify compatible versions for Windows
+torchaudio==0.13.1
+torch==1.13.1
+# speechbrain==0.5.13
+# whisper==1.1.10
+# pymongo==4.3.3
+# python-dotenv==1.0.0
+# scikit-learn==1.2.2
