@@ -34,7 +34,7 @@ class AudioAnalyzer:
         self.load_models()
         
         # Transcription model
-        self.transcription_model = RealTimeTranscription(model_size='base')
+        self.transcription_model = RealTimeTranscription(model_size='small')
         
         # Voice Database and Speaker Recognition
         self.voice_db = VoiceDatabase()
@@ -54,7 +54,7 @@ class AudioAnalyzer:
         """
         try:
             # Load Whisper model
-            self.whisper_model = whisper.load_model("base")
+            self.whisper_model = whisper.load_model("small")
             
             # Disable diarization pipeline for now
             self.diarization_pipeline = None

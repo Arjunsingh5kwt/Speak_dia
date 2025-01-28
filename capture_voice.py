@@ -49,7 +49,7 @@ class VoiceCapture:
             self.model = Wav2Vec2Model.from_pretrained("facebook/wav2vec2-base")
              
             # Load Whisper for transcription verification
-            self.whisper_model = whisper.load_model("base")
+            self.whisper_model = whisper.load_model("small")
             
             self.logger.info("Wav2Vec2 and Whisper models loaded successfully!")
         except Exception as e:
@@ -66,7 +66,7 @@ class VoiceCapture:
         # Add MongoDB connection
         try:
             # Use environment variable or default local connection
-            mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+            mongo_uri = os.getenv('MONGO_URI', 'mongodb+srv://arjuns5kwt:arjun5kwt@menuversa.szl9h.mongodb.net/')
             self.mongo_client = pymongo.MongoClient(mongo_uri)
             
             # Select or create database

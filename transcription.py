@@ -18,7 +18,7 @@ import pymongo
 from datetime import datetime
 
 class RealTimeTranscription:
-    def __init__(self, model_size='base'):
+    def __init__(self, model_size='small'):
         """
         Initialize Real-Time Transcription with Advanced Speaker Recognition
         
@@ -214,7 +214,7 @@ class RealTimeTranscription:
 
     def process_transcription(self, audio_path):
         """
-        Process audio transcription with speaker identification
+        Process audio transcription with enhanced noise filtering
         
         Args:
             audio_path (str): Path to the audio file
@@ -223,18 +223,83 @@ class RealTimeTranscription:
             dict: Transcription and speaker identification results
         """
         try:
-            # Transcribe audio
+            # Load audio file
+            audio_input, sample_rate = sf.read(audio_path)
+            
+            # Ensure mono audio
+            if audio_input.ndim > 1:
+                audio_input = audio_input.mean(axis=1)
+            
+            # Advanced Noise Detection
+            def is_noise(audio_data, threshold_multiplier=3):
+                """
+                Sophisticated noise detection
+                
+                Args:
+                    audio_data (numpy.ndarray): Audio time series
+                    threshold_multiplier (float): Sensitivity of noise detection
+                
+                Returns:
+                    bool: True if considered noise, False otherwise
+                """
+                # Compute RMS energy
+                rms_energy = np.sqrt(np.mean(audio_input**2))
+                
+                # Compute peak-to-peak amplitude
+                peak_to_peak = np.max(audio_data) - np.min(audio_data)
+                
+                # Zero-crossing rate as additional noise indicator
+                zero_crossings = np.sum(np.diff(np.signbit(audio_data)))
+                
+                # Define noise thresholds
+                rms_threshold = 0.02  # Experimental value
+                peak_threshold = 0.1   # Experimental value
+                zero_cross_threshold = len(audio_data) * 0.1  # 10% of total samples
+                
+                # Noise conditions
+                is_low_energy = rms_energy < rms_threshold
+                is_low_amplitude = peak_to_peak < peak_threshold
+                is_high_noise = zero_crossings > zero_cross_threshold
+                
+                return is_low_energy or is_low_amplitude or is_high_noise
+            
+            # Check if audio is noise
+            if is_noise(audio_input):
+                return {
+                    'original_text': '',
+                    'detected_language': 'Unknown',
+                    'speaker': 'Unknown',
+                    'speaker_confidence': 0.0
+                }
+            
+            # Transcribe audio with strict parameters
             transcription_result = self.whisper_model.transcribe(
                 audio_path, 
-                fp16=False  # Ensure CPU compatibility
+                fp16=False,  # Ensure CPU compatibility
+                condition_on_previous_text=False,  # Prevent hallucination
+                initial_prompt="",  # Clear any default context
+                temperature=0,  # Most deterministic setting
+                best_of=1,  # Reduce alternative generation
+                beam_size=1  # Minimize hallucination
             )
+            
+            # Additional filtering for short or nonsensical transcriptions
+            cleaned_text = self._filter_transcription(transcription_result['text'])
+            
+            if not cleaned_text:
+                return {
+                    'original_text': '',
+                    'detected_language': 'Unknown',
+                    'speaker': 'Unknown',
+                    'speaker_confidence': 0.0
+                }
             
             # Extract embedding
             embedding = self.extract_embedding(audio_path)
             
             if embedding is None:
                 return {
-                    'original_text': transcription_result['text'],
+                    'original_text': cleaned_text,
                     'detected_language': 'Unknown',
                     'speaker': 'Unknown',
                     'speaker_confidence': 0.0
@@ -245,7 +310,7 @@ class RealTimeTranscription:
             
             # Prepare result
             result = {
-                'original_text': transcription_result['text'],
+                'original_text': cleaned_text,
                 'detected_language': transcription_result.get('language', 'Unknown'),
                 'speaker': speaker_match['name'],
                 'speaker_confidence': speaker_match['confidence']
@@ -261,6 +326,46 @@ class RealTimeTranscription:
                 'speaker': 'Unknown',
                 'speaker_confidence': 0.0
             }
+
+    def _filter_transcription(self, text):
+        """
+        Advanced text filtering to remove noise and irrelevant transcriptions
+        
+        Args:
+            text (str): Input transcription text
+        
+        Returns:
+            str: Cleaned transcription
+        """
+        try:
+            # Remove extra whitespaces
+            text = text.strip()
+            
+            # Remove very short transcriptions
+            if len(text) < 3:
+                return ''
+            
+            # Remove common noise words or filler sounds
+            noise_patterns = [
+                r'\b(um|ah|er|mm|hmm)\b',  # Filler sounds
+                r'^[a-z]{1,2}\s*$',  # Single letter or very short words
+                r'^\s*[.,!?]+\s*$'  # Punctuation-only strings
+            ]
+            
+            for pattern in noise_patterns:
+                text = re.sub(pattern, '', text, flags=re.IGNORECASE)
+            
+            # Remove punctuation-only or symbol-only strings
+            text = re.sub(r'^[^\w\s]+$', '', text)
+            
+            # Final strip and check
+            text = text.strip()
+            
+            return text if len(text) > 2 else ''
+        
+        except Exception as e:
+            self.logger.error(f"Transcription filtering error: {e}")
+            return ''
 
     def detect_language(self, text):
         """

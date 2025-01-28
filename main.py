@@ -138,7 +138,7 @@ class RealTimeSpeakerDiarization:
                 return
             
             # Minimum audio length check
-            min_duration = 0.3
+            min_duration = 0.5
             min_samples = int(min_duration * sample_rate)
             if len(audio_data) < min_samples:
                 return
@@ -339,7 +339,7 @@ def main():
         endpoint = os.getenv('AZURE_SPEECH_ENDPOINT')  # Optional
         
         # MongoDB URI handling
-        mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+        mongo_uri = os.getenv('MONGO_URI', 'mongodb+srv://arjuns5kwt:arjun5kwt@menuversa.szl9h.mongodb.net/')
         
         # If environment variables are not set, raise an error
         if not subscription_key:

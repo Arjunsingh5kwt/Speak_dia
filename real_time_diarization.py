@@ -21,17 +21,17 @@ class RealTimeDiarization:
 
         # MongoDB Connection
         try:
-            mongo_uri = os.getenv('MONGO_URI', 'mongodb://localhost:27017/')
+            mongo_uri = os.getenv('MONGO_URI', 'mongodb+srv://arjuns5kwt:arjun5kwt@menuversa.szl9h.mongodb.net/')
             self.mongo_client = pymongo.MongoClient(mongo_uri)
             self.db = self.mongo_client['voice_recognition_db']
-            self.speakers_collection = self.db['voice_embeddings']
+            self.speakers_collection = self.db['voice_embedding']
         except Exception as e: 
             self.logger.error(f"MongoDB connection error: {e}")
             raise
 
         # Load Whisper model
         try:
-            self.whisper_model = whisper.load_model('medium')
+            self.whisper_model = whisper.load_model('small')
         except Exception as e:
             self.logger.error(f"Whisper model loading error: {e}")
             raise
@@ -143,12 +143,12 @@ class RealTimeDiarization:
 
         return default_name
 
-    def real_time_processing(self, duration=5, sample_rate=16000):
+    def real_time_processing(self, duration=10, sample_rate=16000):
         """
         Real-time audio processing with continuous streaming
         
         Args:
-            duration (int): Duration of audio chunk
+            duration (int): Duration of audio chunk (in seconds)
             sample_rate (int): Sampling rate
         """
         def audio_callback(indata, frames, time, status):
